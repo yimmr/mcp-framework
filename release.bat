@@ -17,7 +17,7 @@ git status
 git add .gitignore pyproject.toml uv.lock README.md CHANGELOG.md SECURITY.md LICENSE release.bat publish.bat
 git add mcp_server_core/ tests/
 git commit -m "%MSG%"
-git push origin main
+git push origin main --tags
 
 if %ERRORLEVEL% EQU 0 (
     echo.
