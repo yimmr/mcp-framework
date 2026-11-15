@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import httpx
 from starlette.applications import Starlette
@@ -30,10 +29,7 @@ from mcp_server_core.http_server import (
 )
 from mcp_server_core.logging import (
     LoggingConfig,
-    LogManager,
-    TraceLogFilter,
     extract_or_generate_trace_id,
-    generate_trace_id,
     get_current_trace_id,
     instrument_fastmcp_server,
     observe_tool,
@@ -45,7 +41,6 @@ from mcp_server_core.logging import (
     setup_logging,
     summarize_tool_result,
 )
-from mcp_server_core.oauth import LocalOAuthServer
 
 
 class TestLoggingConfig(unittest.TestCase):
@@ -463,8 +458,6 @@ class TestToolAspectInterception(unittest.IsolatedAsyncioTestCase):
     async def test_real_mcp_streamable_http_instrumentation_and_per_request_trace(self):
         """P1-1 / P1-2 / R-1 / R-2: Real MCP transport trace propagation & tool aspect execution."""
         import httpx
-        from mcp_server_core.http_server import create_mcp_asgi_app
-        from mcp_server_core.env import DeploymentEnvConfig
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

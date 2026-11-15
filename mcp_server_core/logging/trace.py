@@ -4,7 +4,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import secrets
-from typing import Any, Mapping
+from typing import Any
 
 _CURRENT_TRACE_ID: contextvars.ContextVar[str] = contextvars.ContextVar("_CURRENT_TRACE_ID", default="")
 _REQUEST_TRACE_REGISTRY: dict[tuple[str, str], str] = {}

@@ -17,7 +17,6 @@ from .sanitizer import (
 )
 from .trace import (
     generate_local_trace_id,
-    generate_trace_id,
     get_current_trace_id,
     reset_current_trace_id,
     set_current_trace_id,

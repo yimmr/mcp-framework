@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-16
+
+### Added
+- **Two-Layer Logging & Observability Engine (`mcp_server_core.logging`)**:
+  - Introduced production-grade two-layer logging architecture with structured access logs (`access.log`), application runtime logs (`<service>.log`), and dedicated error logs (`error.log`).
+  - Added `LoggingConfig` and `LogManager` supporting file rotation, log level customization, and runtime configuration propagation.
+  - Added automatic payload sanitization (`sanitize_arguments`, `sanitize_value`) to mask sensitive credentials (passwords, tokens, API keys) and truncate large inputs/outputs.
+  - Implemented end-to-end distributed trace propagation (`x-trace-id`, `TraceLogFilter`, `TraceContextMiddleware`, `generate_trace_id`, `get_current_trace_id`).
+  - Added non-invasive FastMCP instrumentation (`instrument_fastmcp_server`, `@observe_tool`) intercepting tool calls across streamable HTTP, stdio, and direct invocations with high-precision timing and formatted error reporting.
+
+### Fixed
+- **Process Supervisor & Windows Identity Verification**:
+  - Added strict timeout to `taskkill` in `kill_pid()` to prevent indefinite process termination hangs on Windows.
+  - Hardened `is_mcp_or_related_process()` with Win32 process executable inspection and command line verification before process termination.
+- **Tray Error Logging**: Relocated tray application startup and runtime error logs into the centralized `.runtime/logs` directory.
+- **Test Compatibility**: Updated test harnesses and fixtures for pytest 9.x and Python 3.14 async test runner compatibility.
+
 ## [0.6.0] - 2026-11-15
 
 ### Added
