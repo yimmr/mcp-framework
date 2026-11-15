@@ -554,7 +554,9 @@ class BaseTrayApp:
         except Exception as e:
             import traceback
             try:
-                (self.runtime_dir / "tray_debug.log").write_text(
+                logs_dir = self.runtime_dir / "logs"
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                (logs_dir / "tray_error.log").write_text(
                     f"Exception: {e}\n{traceback.format_exc()}", encoding="utf-8"
                 )
             except Exception:

@@ -139,7 +139,7 @@ def observe_tool(
 
         return sync_wrapper
 
-    if len(name or "") > 0 and callable(name):
+    if callable(name):
         actual_fn = name
         name = None
         return decorator(actual_fn)
