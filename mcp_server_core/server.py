@@ -266,10 +266,18 @@ def serve_stdio(
     base_dir: Path | None = None,
     service_name: str | None = None,
     payload_hook: Callable[[str, dict[str, Any]], dict[str, Any] | None] | None = None,
+    env_cfg: DeploymentEnvConfig | None = None,
+    logging_config: Any = None,
 ) -> None:
     """Run FastMCP via Stdio transport."""
     root = (base_dir or Path.cwd()).resolve()
-    mgr = setup_logging(base_dir=root, service_name=service_name or "mcp_service")
+    resolved_name = service_name or getattr(env_cfg, "service_name", "mcp_service") or "mcp_service"
+    log_cfg = logging_config or getattr(env_cfg, "logging_config", None)
+    if isinstance(log_cfg, dict):
+        from .logging.config import LoggingConfig
+        log_cfg = LoggingConfig.from_dict_and_env(base_dir=root, config_dict=log_cfg)
+
+    mgr = setup_logging(base_dir=root, config=log_cfg, service_name=resolved_name)
     instrument_fastmcp_server(server, payload_hook=payload_hook)
     try:
         server.run(transport="stdio")
@@ -288,6 +296,8 @@ def run_mcp_server(
     service_title: str | None = None,
     custom_consent_renderer: Callable[..., str] | None = None,
     payload_hook: Callable[[str, dict[str, Any]], dict[str, Any] | None] | None = None,
+    env_cfg: DeploymentEnvConfig | None = None,
+    logging_config: Any = None,
 ) -> None:
     """Universal MCP Server Runner entrypoint with CLI argument parsing."""
     root = (base_dir or Path.cwd()).resolve()
@@ -306,10 +316,18 @@ def run_mcp_server(
 
     # 1. Load deployment config and apply CLI overrides
     config_file = Path(parsed.config_path).resolve() if parsed.config_path else None
-    if config_file and config_file.is_file():
-        env_cfg = DeploymentEnvConfig.load(config_file.parent, env_file=config_file)
-    else:
-        env_cfg = DeploymentEnvConfig.load(root)
+    if env_cfg is None:
+        if config_file and config_file.is_file():
+            env_cfg = DeploymentEnvConfig.load(config_file.parent, env_file=config_file)
+        else:
+            env_cfg = DeploymentEnvConfig.load(root)
+
+    if logging_config is not None:
+        from .logging.config import LoggingConfig
+        if isinstance(logging_config, dict):
+            env_cfg.logging_config = LoggingConfig.from_dict_and_env(base_dir=root, config_dict=logging_config)
+        elif isinstance(logging_config, LoggingConfig):
+            env_cfg.logging_config = logging_config
 
     # 2. Record PID in configured runtime directory
     runtime_dir = get_runtime_dir(root, runtime_dir_name=getattr(env_cfg, "runtime_dir", None))
@@ -317,7 +335,14 @@ def run_mcp_server(
 
     # 3. Stdio mode
     if parsed.transport == "stdio":
-        serve_stdio(server, base_dir=root, service_name=service_name, payload_hook=payload_hook)
+        serve_stdio(
+            server,
+            base_dir=root,
+            service_name=service_name,
+            payload_hook=payload_hook,
+            env_cfg=env_cfg,
+            logging_config=logging_config,
+        )
         return
 
     # 4. HTTP mode overrides

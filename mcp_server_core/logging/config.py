@@ -53,6 +53,9 @@ class LoggingConfig:
     enable_console: bool = True  # Mirror logs to console/stdout
     enable_trace_injection: bool = True  # Extract and bind CF-Ray / X-Request-ID
 
+    # Directory containment guard: restrict logs within project root by default
+    allow_outside_base: bool = False
+
     # Sensitive key patterns to mask in arguments
     sensitive_keys: list[str] = field(
         default_factory=lambda: [
@@ -68,14 +71,29 @@ class LoggingConfig:
         ]
     )
 
-    def resolve_log_dir(self, base_dir: Path | None = None) -> Path:
-        """Resolve the absolute log directory and ensure it exists."""
+    def resolve_log_dir(
+        self,
+        base_dir: Path | None = None,
+        allow_outside_base: bool | None = None,
+    ) -> Path:
+        """Resolve the absolute log directory and ensure it exists and remains within base_dir."""
         root = (base_dir or Path.cwd()).resolve()
         p = Path(self.log_dir)
         if not p.is_absolute():
             resolved = (root / p).resolve()
         else:
             resolved = p.resolve()
+
+        effective_allow = self.allow_outside_base if allow_outside_base is None else allow_outside_base
+        if not effective_allow:
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                raise ValueError(
+                    f"Log directory '{resolved}' escapes base directory '{root}'. "
+                    f"Set allow_outside_base=True to permit paths outside base_dir."
+                )
+
         resolved.mkdir(parents=True, exist_ok=True)
         return resolved
 
@@ -118,17 +136,19 @@ class LoggingConfig:
         cfg_enable_console = raw.get("enable_console")
         cfg_enable_trace = raw.get("enable_trace_injection")
         cfg_sensitive = raw.get("sensitive_keys")
+        cfg_allow_outside = raw.get("allow_outside_base")
 
         # Extract tier 2 (environment variables)
         env_dir = os.getenv("MCP_LOG_DIR")
-        env_app = os.getenv("MCP_LOG_APP_FILE")
-        env_access = os.getenv("MCP_LOG_ACCESS_FILE")
-        env_error = os.getenv("MCP_LOG_ERROR_FILE")
+        env_app = os.getenv("MCP_LOG_APP_FILE") or os.getenv("MCP_LOG_APP_FILENAME")
+        env_access = os.getenv("MCP_LOG_ACCESS_FILE") or os.getenv("MCP_LOG_ACCESS_FILENAME")
+        env_error = os.getenv("MCP_LOG_ERROR_FILE") or os.getenv("MCP_LOG_ERROR_FILENAME")
         env_level = os.getenv("MCP_LOG_LEVEL")
         env_max_bytes = os.getenv("MCP_LOG_MAX_BYTES")
         env_backup_count = os.getenv("MCP_LOG_BACKUP_COUNT")
         env_console = os.getenv("MCP_LOG_ENABLE_CONSOLE") or os.getenv("MCP_LOG_CONSOLE")
         env_trace = os.getenv("MCP_LOG_ENABLE_TRACE_INJECTION") or os.getenv("MCP_LOG_TRACE_INJECTION")
+        env_allow_outside = os.getenv("MCP_LOG_ALLOW_OUTSIDE_BASE")
 
         # Resolve tier 1 (overrides kwargs) with fallback to tier 2, tier 3, and default
         def pick(override_key: str, env_val: Any, cfg_val: Any, default_val: Any) -> Any:
@@ -151,6 +171,7 @@ class LoggingConfig:
         final_backup_count = _parse_int(pick("backup_count", env_backup_count, cfg_backup_count, 5), 5)
         final_enable_console = _parse_bool(pick("enable_console", env_console, cfg_enable_console, True), True)
         final_enable_trace = _parse_bool(pick("enable_trace_injection", env_trace, cfg_enable_trace, True), True)
+        final_allow_outside = _parse_bool(pick("allow_outside_base", env_allow_outside, cfg_allow_outside, False), False)
 
         final_sensitive = overrides.get("sensitive_keys") or cfg_sensitive
         sensitive_list = list(final_sensitive) if isinstance(final_sensitive, (list, tuple)) else None
@@ -165,6 +186,7 @@ class LoggingConfig:
             backup_count=final_backup_count,
             enable_console=final_enable_console,
             enable_trace_injection=final_enable_trace,
+            allow_outside_base=final_allow_outside,
         )
         if sensitive_list is not None:
             inst.sensitive_keys = sensitive_list

@@ -119,11 +119,27 @@ def is_port_in_use(port: int) -> bool:
 
 
 def is_mcp_or_related_process(pid: int) -> bool:
-    """Verify whether a PID belongs to an MCP related process (python, uvicorn, mcp, cloudflared)."""
+    """Verify whether a PID belongs to an MCP related process (python, uvicorn, mcp, cloudflared, pytest)."""
     if pid <= 0:
         return False
+    whitelist = ("python", "uvicorn", "mcp", "cloudflared", "pytest")
+    if pid == os.getpid():
+        exe = Path(sys.executable).name.lower()
+        if any(k in exe for k in whitelist):
+            return True
     try:
         if sys.platform == "win32":
+            try:
+                handle = win32api.OpenProcess(win32con.PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                if handle:
+                    try:
+                        name = win32process.GetModuleFileNameEx(handle, 0).lower()
+                        return any(k in name for k in whitelist)
+                    finally:
+                        win32api.CloseHandle(handle)
+            except Exception:
+                pass
+            # Fallback to tasklist if Win32 API fails
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             res = subprocess.run(
                 ["tasklist", "/fi", f"pid eq {pid}", "/fo", "csv", "/nh"],
@@ -131,25 +147,27 @@ def is_mcp_or_related_process(pid: int) -> bool:
                 text=True,
                 errors="replace",
                 creationflags=creationflags,
-                timeout=2.0,
+                timeout=1.0,
             )
             stdout = res.stdout.lower()
-            return any(k in stdout for k in ("python", "uvicorn", "mcp", "cloudflared"))
+            return any(k in stdout for k in whitelist)
         else:
             cmdline_path = Path(f"/proc/{pid}/cmdline")
             if cmdline_path.exists():
                 cmd = cmdline_path.read_text(errors="replace").lower()
-                return any(k in cmd for k in ("python", "uvicorn", "mcp", "cloudflared"))
+                return any(k in cmd for k in whitelist)
             res = subprocess.run(
                 ["ps", "-p", str(pid), "-o", "command="],
                 capture_output=True,
                 text=True,
-                timeout=2.0,
+                timeout=1.0,
             )
             cmd = res.stdout.lower()
-            return any(k in cmd for k in ("python", "uvicorn", "mcp", "cloudflared"))
+            return any(k in cmd for k in whitelist)
     except Exception as e:
         logger.warning("Failed to verify process identity for PID %s: %s", pid, e)
+        if pid == os.getpid():
+            return True
         return False
 
 

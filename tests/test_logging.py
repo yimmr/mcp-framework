@@ -424,5 +424,163 @@ class TestToolAspectInterception(unittest.IsolatedAsyncioTestCase):
                 mgr.close()
 
 
+    def test_logging_dir_containment(self):
+        """P2-1 / R-6: Verify log directory containment checks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg_escape = LoggingConfig(log_dir="../escaped_logs")
+            with self.assertRaises(ValueError) as ctx:
+                cfg_escape.resolve_log_dir(base)
+            self.assertIn("escapes base directory", str(ctx.exception))
+
+            # allow_outside_base=True permits writing outside base_dir
+            cfg_allowed = LoggingConfig(log_dir="../escaped_logs", allow_outside_base=True)
+            resolved = cfg_allowed.resolve_log_dir(base)
+            self.assertTrue(resolved.exists())
+            import shutil
+            if resolved.exists():
+                shutil.rmtree(resolved)
+
+    def test_sensitive_key_boundary_matching(self):
+        """P3-3: Verify authorized_paths is not false-positively masked as sensitive."""
+        from mcp_server_core.logging.sanitizer import is_sensitive_key, sanitize_arguments
+        self.assertFalse(is_sensitive_key("authorized_paths"))
+        self.assertTrue(is_sensitive_key("auth"))
+        self.assertTrue(is_sensitive_key("auth_token"))
+        self.assertTrue(is_sensitive_key("user_auth"))
+        self.assertTrue(is_sensitive_key("api_key"))
+
+        args = {
+            "authorized_paths": ["/home/user/project", "/tmp/docs"],
+            "auth_token": "secret_abc_123",
+            "normal_arg": "hello",
+        }
+        sanitized = sanitize_arguments("test_tool", args)
+        self.assertEqual(sanitized["authorized_paths"], ["/home/user/project", "/tmp/docs"])
+        self.assertEqual(sanitized["auth_token"], "***")
+        self.assertEqual(sanitized["normal_arg"], "hello")
+
+    async def test_real_mcp_streamable_http_instrumentation_and_per_request_trace(self):
+        """P1-1 / P1-2 / R-1 / R-2: Real MCP transport trace propagation & tool aspect execution."""
+        import httpx
+        from mcp_server_core.http_server import create_mcp_asgi_app
+        from mcp_server_core.env import DeploymentEnvConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = LoggingConfig(log_dir=".runtime/logs", enable_console=False)
+            mgr = setup_logging(base_dir=root, config=cfg, service_name="generic_service")
+
+            server = FastMCP("generic_mcp")
+
+            # Uninstrumented tool definitions (no manual observe_tool decorator)
+            @server.tool()
+            def ping(echo: str = "pong", auth_key: str = "") -> dict[str, str]:
+                return {"reply": echo}
+
+            @server.tool()
+            def deliberate_failure(code: int) -> str:
+                raise RuntimeError(f"Simulated crash with code {code}")
+
+            instrument_fastmcp_server(server)
+
+            env_cfg = DeploymentEnvConfig(require_auth=False)
+            asgi_app = create_mcp_asgi_app(server=server, env_cfg=env_cfg, oauth_server=None, require_auth=False)
+
+            headers_common = {"accept": "application/json, text/event-stream"}
+
+            try:
+                async with asgi_app.router.lifespan_context(asgi_app):
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=asgi_app),
+                        base_url="http://localhost:8788",
+                    ) as client:
+                        # 1. Initialize with cf-ray: ray-init-AAA
+                        init_res = await client.post(
+                            "/mcp",
+                            json={
+                                "jsonrpc": "2.0",
+                                "id": "init-1",
+                                "method": "initialize",
+                                "params": {
+                                    "protocolVersion": "2024-11-05",
+                                    "capabilities": {},
+                                    "clientInfo": {"name": "test-client", "version": "1.0"},
+                                },
+                            },
+                            headers={**headers_common, "cf-ray": "ray-init-AAA"},
+                        )
+                        self.assertEqual(init_res.status_code, 200)
+                        session_id = init_res.headers.get("mcp-session-id")
+                        self.assertIsNotNone(session_id)
+
+                        # 2. Initialized notification
+                        notif_res = await client.post(
+                            "/mcp",
+                            json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                            headers={**headers_common, "mcp-session-id": session_id, "cf-ray": "ray-notif-BBB"},
+                        )
+                        self.assertEqual(notif_res.status_code, 202)
+
+                        # 3. Call tool: ping with cf-ray: ray-ping-CCC
+                        call1_res = await client.post(
+                            "/mcp",
+                            json={
+                                "jsonrpc": "2.0",
+                                "id": "call-1",
+                                "method": "tools/call",
+                                "params": {"name": "ping", "arguments": {"echo": "hello", "auth_key": "sec_token1"}},
+                            },
+                            headers={**headers_common, "mcp-session-id": session_id, "cf-ray": "ray-ping-CCC"},
+                        )
+                        self.assertEqual(call1_res.status_code, 200)
+
+                        # 4. Call tool: deliberate_failure with cf-ray: ray-err-DDD
+                        call2_res = await client.post(
+                            "/mcp",
+                            json={
+                                "jsonrpc": "2.0",
+                                "id": "call-2",
+                                "method": "tools/call",
+                                "params": {"name": "deliberate_failure", "arguments": {"code": 500}},
+                            },
+                            headers={**headers_common, "mcp-session-id": session_id, "cf-ray": "ray-err-DDD"},
+                        )
+                        self.assertEqual(call2_res.status_code, 200)
+
+                        # Verify client error body contains trace_id matching the failure request ray
+                        call2_text = call2_res.text
+                        self.assertIn("isError", call2_text)
+                        self.assertIn("trace_id: ray-err-DDD", call2_text)
+                        self.assertNotIn("ray-init-AAA", call2_text)
+
+                for h in mgr._handlers:
+                    h.flush()
+
+                access_txt = (mgr.log_dir / "access.log").read_text(encoding="utf-8")
+                app_txt = (mgr.log_dir / "generic_service.log").read_text(encoding="utf-8")
+                error_txt = (mgr.log_dir / "error.log").read_text(encoding="utf-8")
+
+                # Access log verification
+                self.assertIn("[trace_id: ray-init-AAA]", access_txt)
+                self.assertIn("[trace_id: ray-ping-CCC]", access_txt)
+                self.assertIn("[trace_id: ray-err-DDD]", access_txt)
+
+                # App log verification: ping tool execution tied to ray-ping-CCC, NOT ray-init-AAA
+                self.assertIn("Tool execution started: ping", app_txt)
+                self.assertIn("[trace_id: ray-ping-CCC]", app_txt)
+                self.assertIn("Tool execution completed: ping", app_txt)
+                self.assertIn('"auth_key": "***"', app_txt)
+
+                # Error log verification: failure tied to ray-err-DDD, NOT ray-init-AAA
+                self.assertIn("Tool execution failed: deliberate_failure", error_txt)
+                self.assertIn("[trace_id: ray-err-DDD]", error_txt)
+                self.assertIn("Simulated crash with code 500", error_txt)
+                self.assertNotIn("[trace_id: ray-init-AAA] Tool execution failed", error_txt)
+
+            finally:
+                mgr.close()
+
+
 if __name__ == "__main__":
     unittest.main()

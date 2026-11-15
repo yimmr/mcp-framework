@@ -323,6 +323,7 @@ class TestTunnelModule(unittest.TestCase):
                 ["taskkill", "/f", "/im", "cloudflared.exe"],
                 capture_output=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=2.0,
             )
 
         mock_run.reset_mock()
@@ -332,6 +333,7 @@ class TestTunnelModule(unittest.TestCase):
             mock_run.assert_called_with(
                 ["pkill", "-x", "cloudflared"],
                 capture_output=True,
+                timeout=2.0,
             )
 
     @patch("mcp_server_core.tunnel.ensure_tunnel_running", return_value=True)
@@ -345,6 +347,7 @@ class TestTunnelModule(unittest.TestCase):
                 ["taskkill", "/f", "/im", "cloudflared.exe"],
                 capture_output=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=2.0,
             )
             mock_ensure.assert_called_once()
 
@@ -356,6 +359,7 @@ class TestTunnelModule(unittest.TestCase):
             mock_run.assert_called_with(
                 ["pkill", "-x", "cloudflared"],
                 capture_output=True,
+                timeout=2.0,
             )
             mock_ensure.assert_called_once()
 

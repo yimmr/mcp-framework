@@ -24,11 +24,47 @@ DEFAULT_SENSITIVE_KEY_SUBSTRINGS = (
 PayloadHook = Callable[[str, dict[str, Any]], dict[str, Any] | None]
 
 
+SAFE_NON_SENSITIVE_KEYS = {
+    "authorized_paths",
+    "authorized_keys_file",
+    "author",
+    "authors",
+    "authorization_url",
+}
+
+
 def is_sensitive_key(key: str, sensitive_keys: list[str] | None = None) -> bool:
-    """Check if a dictionary key matches common sensitive information patterns."""
+    """Check if a dictionary key matches common sensitive information patterns.
+
+    Uses token/boundary-aware matching to avoid false positives (e.g. 'authorized_paths').
+    """
     k_lower = key.lower()
+    if k_lower in SAFE_NON_SENSITIVE_KEYS:
+        return False
+
     targets = sensitive_keys or DEFAULT_SENSITIVE_KEY_SUBSTRINGS
-    return any(target in k_lower for target in targets)
+    tokens = set(re.split(r"[_\-.\s:]+", k_lower))
+
+    for target in targets:
+        t_lower = target.lower().strip()
+        if not t_lower:
+            continue
+        if k_lower == t_lower:
+            return True
+        if "_" not in t_lower and "-" not in t_lower:
+            if t_lower in tokens:
+                return True
+            if (
+                k_lower.startswith(f"{t_lower}_")
+                or k_lower.endswith(f"_{t_lower}")
+                or f"_{t_lower}_" in k_lower
+            ):
+                return True
+        else:
+            if t_lower in k_lower:
+                return True
+
+    return False
 
 
 def sanitize_string_value(val: str, max_str_len: int = 10_000) -> str:

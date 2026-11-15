@@ -105,24 +105,25 @@ class ServerProcessSupervisor:
         env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        # Only pass explicit user-set MCP_LOG_DIR, never forcibly override child's config.yaml
         log_dir_str = os.getenv("MCP_LOG_DIR", "").strip()
         if log_dir_str:
             log_dir = Path(log_dir_str)
             if not log_dir.is_absolute():
                 log_dir = (self.cwd / log_dir).resolve()
+            env["MCP_LOG_DIR"] = str(log_dir)
         else:
             log_dir = (self.runtime_dir / "logs").resolve()
         log_dir.mkdir(parents=True, exist_ok=True)
-        env["MCP_LOG_DIR"] = str(log_dir)
 
         out_file = None
         err_file = None
         try:
-            out_file = open(log_dir / "app.log", "a", encoding="utf-8")
+            out_file = open(log_dir / "boot.out.log", "a", encoding="utf-8")
         except Exception:
             pass
         try:
-            err_file = open(log_dir / "error.log", "a", encoding="utf-8")
+            err_file = open(log_dir / "boot.err.log", "a", encoding="utf-8")
         except Exception:
             pass
 

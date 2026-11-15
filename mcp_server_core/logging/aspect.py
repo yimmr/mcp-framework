@@ -16,6 +16,7 @@ from .sanitizer import (
     summarize_tool_result,
 )
 from .trace import (
+    generate_local_trace_id,
     generate_trace_id,
     get_current_trace_id,
     reset_current_trace_id,
@@ -70,12 +71,14 @@ def observe_tool(
                 tid = get_current_trace_id()
                 token_trace = None
                 if not tid:
-                    tid = generate_trace_id()
+                    tid = generate_local_trace_id()
                     token_trace = set_current_trace_id(tid)
 
                 app_logger, error_logger = _get_app_and_error_loggers()
                 effective_hook = payload_hook or _GLOBAL_PAYLOAD_HOOK
-                sanitized_args = sanitize_arguments(tool_name, kwargs, payload_hook=effective_hook)
+                mgr = get_log_manager()
+                sens_keys = mgr.config.sensitive_keys if (mgr and mgr.config) else None
+                sanitized_args = sanitize_arguments(tool_name, kwargs, payload_hook=effective_hook, sensitive_keys=sens_keys)
                 args_preview = json.dumps(sanitized_args, ensure_ascii=False) if sanitized_args else "{}"
 
                 app_logger.info(f"Tool started: {tool_name} | args: {args_preview}")
@@ -109,12 +112,14 @@ def observe_tool(
             tid = get_current_trace_id()
             token_trace = None
             if not tid:
-                tid = generate_trace_id()
+                tid = generate_local_trace_id()
                 token_trace = set_current_trace_id(tid)
 
             app_logger, error_logger = _get_app_and_error_loggers()
             effective_hook = payload_hook or _GLOBAL_PAYLOAD_HOOK
-            sanitized_args = sanitize_arguments(tool_name, kwargs, payload_hook=effective_hook)
+            mgr = get_log_manager()
+            sens_keys = mgr.config.sensitive_keys if (mgr and mgr.config) else None
+            sanitized_args = sanitize_arguments(tool_name, kwargs, payload_hook=effective_hook, sensitive_keys=sens_keys)
             args_preview = json.dumps(sanitized_args, ensure_ascii=False) if sanitized_args else "{}"
 
             app_logger.info(f"Tool started: {tool_name} | args: {args_preview}")
@@ -158,63 +163,155 @@ def instrument_fastmcp_server(
 ) -> None:
     """Seamlessly instrument a FastMCP server instance so all registered tools are observed.
 
-    Guarantees 100% zero-boilerplate interception across all tools registered on FastMCP.
+    Intercepts FastMCP at the ToolManager layer so tools executed via real MCP transports
+    (Streamable HTTP, stdio, SSE) as well as direct server.call_tool() invocations are
+    consistently and automatically observed with high-precision timing, argument sanitization,
+    trace propagation, and ToolError error formatting.
     """
     if getattr(server, "_mcp_observability_instrumented", False):
         return
     server._mcp_observability_instrumented = True
 
-    orig_call_tool = getattr(server, "call_tool", None)
-    if orig_call_tool is None or not callable(orig_call_tool):
-        return
+    tool_mgr = getattr(server, "_tool_manager", None)
+    if tool_mgr is not None and hasattr(tool_mgr, "call_tool") and callable(tool_mgr.call_tool):
+        orig_tm_call_tool = tool_mgr.call_tool
 
-    @functools.wraps(orig_call_tool)
-    async def instrumented_call_tool(name: str, arguments: dict[str, Any]) -> Any:
-        tid = get_current_trace_id()
-        token_trace = None
-        if not tid:
-            tid = generate_trace_id()
+        @functools.wraps(orig_tm_call_tool)
+        async def instrumented_tm_call_tool(
+            name: str,
+            arguments: dict[str, Any],
+            context: Any = None,
+            convert_result: bool = False,
+        ) -> Any:
+            if _IN_OBSERVED_TOOL.get():
+                return await orig_tm_call_tool(name, arguments, context=context, convert_result=convert_result)
+
+            token_tool = _IN_OBSERVED_TOOL.set(True)
+
+            # Resolve trace ID: request context > context object > registry > local fallback
+            tid = get_current_trace_id()
+            if not tid and context:
+                try:
+                    req_ctx = getattr(context, "_request_context", None) or getattr(context, "request_context", None)
+                    req = getattr(req_ctx, "request", None) if req_ctx else None
+                    if req is not None:
+                        if hasattr(req, "scope") and isinstance(req.scope, dict):
+                            tid = req.scope.get("state", {}).get("trace_id")
+                            if not tid and req.scope.get("headers"):
+                                from .trace import extract_or_generate_trace_id
+                                tid = extract_or_generate_trace_id(req.scope.get("headers"))
+                        elif hasattr(req, "headers"):
+                            from .trace import extract_or_generate_trace_id
+                            tid = extract_or_generate_trace_id(req.headers)
+                except Exception:
+                    pass
+
+            if not tid:
+                tid = generate_local_trace_id()
+
             token_trace = set_current_trace_id(tid)
 
-        token_tool = _IN_OBSERVED_TOOL.set(True)
-        app_logger, error_logger = _get_app_and_error_loggers()
-        effective_hook = payload_hook or _GLOBAL_PAYLOAD_HOOK
+            app_logger, error_logger = _get_app_and_error_loggers()
+            effective_hook = payload_hook or _GLOBAL_PAYLOAD_HOOK
 
-        sanitized_args = sanitize_arguments(name, arguments, payload_hook=effective_hook)
-        try:
-            args_str = json.dumps(sanitized_args, ensure_ascii=False)
-        except Exception:
-            args_str = str(sanitized_args)
+            mgr = get_log_manager()
+            sens_keys = mgr.config.sensitive_keys if (mgr and mgr.config) else None
 
-        app_logger.info(f"Tool execution started: {name} | arguments: {args_str}")
-        t0 = time.perf_counter()
-        try:
-            result = await orig_call_tool(name, arguments)
-            duration_ms = (time.perf_counter() - t0) * 1000.0
-            summary = summarize_tool_result(result)
-            app_logger.info(f"Tool execution completed: {name} | duration: {duration_ms:.2f}ms | result: {summary}")
-            return result
-        except Exception as exc:
-            duration_ms = (time.perf_counter() - t0) * 1000.0
-            error_logger.exception(
-                f"Tool execution failed: {name} | duration: {duration_ms:.2f}ms | error: {type(exc).__name__}: {exc}"
-            )
-            _annotate_exception_with_trace(exc, tid)
+            sanitized_args = sanitize_arguments(name, arguments, payload_hook=effective_hook, sensitive_keys=sens_keys)
+            try:
+                args_str = json.dumps(sanitized_args, ensure_ascii=False)
+            except Exception:
+                args_str = str(sanitized_args)
 
-            # Ensure client-visible message contains [trace_id: {tid}]
-            err_msg = str(exc)
-            if f"trace_id: {tid}" not in err_msg and not err_msg.startswith(f"[{tid}]"):
-                new_msg = f"[trace_id: {tid}] {err_msg}"
+            app_logger.info(f"Tool execution started: {name} | arguments: {args_str}")
+            t0 = time.perf_counter()
+            try:
+                result = await orig_tm_call_tool(name, arguments, context=context, convert_result=convert_result)
+                duration_ms = (time.perf_counter() - t0) * 1000.0
+                summary = summarize_tool_result(result)
+                app_logger.info(f"Tool execution completed: {name} | duration: {duration_ms:.2f}ms | result: {summary}")
+                return result
+            except Exception as exc:
+                duration_ms = (time.perf_counter() - t0) * 1000.0
+                error_logger.exception(
+                    f"Tool execution failed: {name} | duration: {duration_ms:.2f}ms | error: {type(exc).__name__}: {exc}"
+                )
+                _annotate_exception_with_trace(exc, tid)
+
+                # Ensure client-visible message contains [trace_id: {tid}]
+                err_msg = str(exc)
+                if f"trace_id: {tid}" not in err_msg and not err_msg.startswith(f"[{tid}]"):
+                    new_msg = f"[trace_id: {tid}] {err_msg}"
+                else:
+                    new_msg = err_msg
+
                 try:
                     from mcp.server.fastmcp.exceptions import ToolError
-                    if isinstance(exc, ToolError):
-                        raise ToolError(new_msg) from exc
+                    raise ToolError(new_msg) from exc
                 except ImportError:
                     pass
-            raise
-        finally:
-            _IN_OBSERVED_TOOL.reset(token_tool)
-            if token_trace is not None:
-                reset_current_trace_id(token_trace)
+                raise
+            finally:
+                _IN_OBSERVED_TOOL.reset(token_tool)
+                if token_trace is not None:
+                    reset_current_trace_id(token_trace)
 
-    server.call_tool = instrumented_call_tool
+        tool_mgr.call_tool = instrumented_tm_call_tool
+
+    orig_call_tool = getattr(server, "call_tool", None)
+    if orig_call_tool is not None and callable(orig_call_tool):
+        @functools.wraps(orig_call_tool)
+        async def instrumented_call_tool(name: str, arguments: dict[str, Any]) -> Any:
+            if _IN_OBSERVED_TOOL.get():
+                return await orig_call_tool(name, arguments)
+            # If tool_manager was intercepted, orig_call_tool delegates to tool_manager.call_tool
+            if tool_mgr is not None and hasattr(tool_mgr, "call_tool"):
+                return await orig_call_tool(name, arguments)
+
+            # Fallback for servers without _tool_manager
+            token_tool = _IN_OBSERVED_TOOL.set(True)
+            tid = get_current_trace_id() or generate_local_trace_id()
+            token_trace = set_current_trace_id(tid)
+            app_logger, error_logger = _get_app_and_error_loggers()
+            effective_hook = payload_hook or _GLOBAL_PAYLOAD_HOOK
+            mgr = get_log_manager()
+            sens_keys = mgr.config.sensitive_keys if (mgr and mgr.config) else None
+            sanitized_args = sanitize_arguments(name, arguments, payload_hook=effective_hook, sensitive_keys=sens_keys)
+            try:
+                args_str = json.dumps(sanitized_args, ensure_ascii=False)
+            except Exception:
+                args_str = str(sanitized_args)
+
+            app_logger.info(f"Tool execution started: {name} | arguments: {args_str}")
+            t0 = time.perf_counter()
+            try:
+                result = await orig_call_tool(name, arguments)
+                duration_ms = (time.perf_counter() - t0) * 1000.0
+                summary = summarize_tool_result(result)
+                app_logger.info(f"Tool execution completed: {name} | duration: {duration_ms:.2f}ms | result: {summary}")
+                return result
+            except Exception as exc:
+                duration_ms = (time.perf_counter() - t0) * 1000.0
+                error_logger.exception(
+                    f"Tool execution failed: {name} | duration: {duration_ms:.2f}ms | error: {type(exc).__name__}: {exc}"
+                )
+                _annotate_exception_with_trace(exc, tid)
+
+                err_msg = str(exc)
+                if f"trace_id: {tid}" not in err_msg and not err_msg.startswith(f"[{tid}]"):
+                    new_msg = f"[trace_id: {tid}] {err_msg}"
+                else:
+                    new_msg = err_msg
+
+                try:
+                    from mcp.server.fastmcp.exceptions import ToolError
+                    raise ToolError(new_msg) from exc
+                except ImportError:
+                    pass
+                raise
+            finally:
+                _IN_OBSERVED_TOOL.reset(token_tool)
+                if token_trace is not None:
+                    reset_current_trace_id(token_trace)
+
+        server.call_tool = instrumented_call_tool

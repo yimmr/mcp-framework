@@ -345,11 +345,13 @@ def stop_tunnel_if_no_mcp(candidate_ports: set[int] | list[int] | None = None) -
                 ["taskkill", "/f", "/im", "cloudflared.exe"],
                 capture_output=True,
                 creationflags=creationflags,
+                timeout=2.0,
             )
         else:
             subprocess.run(
                 ["pkill", "-x", "cloudflared"],
                 capture_output=True,
+                timeout=2.0,
             )
     except Exception as e:
         logger.warning("Failed to stop cloudflared process: %s", e)
@@ -536,11 +538,13 @@ def restart_tunnel() -> bool:
                 ["taskkill", "/f", "/im", "cloudflared.exe"],
                 capture_output=True,
                 creationflags=creationflags,
+                timeout=2.0,
             )
         else:
             subprocess.run(
                 ["pkill", "-x", "cloudflared"],
                 capture_output=True,
+                timeout=2.0,
             )
     except Exception as e:
         logger.warning("Failed to kill cloudflared for restart: %s", e)
