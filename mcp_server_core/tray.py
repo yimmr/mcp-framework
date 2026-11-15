@@ -370,7 +370,7 @@ class BaseTrayApp:
             return 0
         if flags is None:
             flags = win32con.MB_ICONINFORMATION | win32con.MB_OK | win32con.MB_SYSTEMMODAL
-        return win32api.MessageBox(0, text, title or self.service_name, flags)
+        return int(win32api.MessageBox(0, text, title or self.service_name, flags))
 
     def choose_folder(self, title: str = "选择文件夹") -> str | None:
         """Open native high-DPI directory chooser dialog with Tkinter or PowerShell fallback."""

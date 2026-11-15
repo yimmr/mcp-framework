@@ -36,7 +36,7 @@ def is_pid_alive(pid: int) -> bool:
             if handle:
                 try:
                     code = win32process.GetExitCodeProcess(handle)
-                    return code == 259  # STILL_ACTIVE
+                    return bool(code == 259)  # STILL_ACTIVE
                 finally:
                     win32api.CloseHandle(handle)
         except Exception as e:

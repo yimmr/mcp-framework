@@ -438,6 +438,7 @@ class LocalOAuthServer:
         config: Any = None,
     ) -> None:
         self.config = config
+        self.trust_proxy_headers: bool | None = None
         self.custom_scopes: list[str] | None = getattr(config, "oauth_scopes", None) if config else None
         if admin_password is not None:
             self.admin_password = admin_password
@@ -852,8 +853,9 @@ def get_server_public_url(
             request.headers.get("x-forwarded-host")
             or request.headers.get("host")
             or getattr(request.url, "netloc", "127.0.0.1")
+            or "127.0.0.1"
         )
-        raw_host = forwarded_host.split(",")[0].strip()
+        raw_host = str(forwarded_host).split(",")[0].strip()
     else:
         raw_host = getattr(request.url, "netloc", "127.0.0.1")
         forwarded_proto = getattr(request.url, "scheme", "http")

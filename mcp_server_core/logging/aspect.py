@@ -58,7 +58,7 @@ def observe_tool(
     """
 
     def decorator(fn: Any) -> Any:
-        tool_name = name or getattr(fn, "__name__", "unnamed_tool")
+        tool_name = str(name or getattr(fn, "__name__", None) or "unnamed_tool")
 
         if inspect.iscoroutinefunction(fn):
             @functools.wraps(fn)

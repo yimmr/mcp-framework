@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Hardened `is_mcp_or_related_process()` with Win32 process executable inspection and command line verification before process termination.
 - **Tray Error Logging**: Relocated tray application startup and runtime error logs into the centralized `.runtime/logs` directory.
 - **Test Compatibility**: Updated test harnesses and fixtures for pytest 9.x and Python 3.14 async test runner compatibility.
+- **Type Safety & Static Analysis**: Resolved all PEP 561 / mypy strict type check diagnostics across 20 source files (`LocalOAuthServer` proxy headers, `get_runtime_dir` typing, `sanitize_arguments` return signatures, and `FastMCP` conditional import compatibility).
+- **Public API Exports**: Fully synchronized top-level `mcp_server_core` exports for `DEFAULT_CHATGPT_REDIRECT_URIS`, `is_mcp_or_related_process`, `set_current_trace_id`, `reset_current_trace_id`, `is_sensitive_key`, `sanitize_string_value`, `set_global_payload_hook`, and `get_global_payload_hook`.
+- **Pre-flight & Security Hygiene**: Updated `.gitignore` with `.mypy_cache/`, added pre-flight test gates to `publish.bat`, updated `SECURITY.md` supported versions table, and documented logging environment variables in `README.md`.
 
 ## [0.6.0] - 2026-11-15
 

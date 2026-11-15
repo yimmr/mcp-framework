@@ -120,7 +120,7 @@ def parse_env_file(file_path: Path | str) -> dict[str, str]:
 def get_runtime_dir(base_dir: Path | None = None, runtime_dir_name: str | None = None) -> Path:
     """Get or create the centralized runtime directory for temporary/state files."""
     root = (base_dir or Path.cwd()).resolve()
-    dir_name = runtime_dir_name or os.getenv("MCP_RUNTIME_DIR", ".runtime")
+    dir_name = runtime_dir_name or os.getenv("MCP_RUNTIME_DIR") or ".runtime"
     runtime_dir = root / dir_name
     runtime_dir.mkdir(parents=True, exist_ok=True)
     return runtime_dir

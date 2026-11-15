@@ -14,7 +14,7 @@ echo ========================================================
 :: 安全检查：确保 .env 不会被误提交
 git status
 
-git add pyproject.toml uv.lock README.md CHANGELOG.md SECURITY.md LICENSE release.bat publish.bat
+git add .gitignore pyproject.toml uv.lock README.md CHANGELOG.md SECURITY.md LICENSE release.bat publish.bat
 git add mcp_server_core/ tests/
 git commit -m "%MSG%"
 git push origin main

@@ -134,7 +134,8 @@ def sanitize_arguments(
         except Exception:
             pass
 
-    return sanitize_value(args, sensitive_keys=sensitive_keys)
+    res = sanitize_value(args, sensitive_keys=sensitive_keys)
+    return res if isinstance(res, dict) else args
 
 
 def summarize_tool_result(result: Any, max_len: int = 300) -> str:

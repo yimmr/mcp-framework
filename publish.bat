@@ -35,15 +35,32 @@ if "%PYPI_TOKEN%"=="" (
     exit /b 1
 )
 
-REM 3. Clean old dist
+REM 3. Clean old dist and build artifacts
 if exist "%~dp0dist" (
     echo [INFO] Cleaning old dist folder...
     rmdir /s /q "%~dp0dist"
 )
+if exist "%~dp0build" (
+    echo [INFO] Cleaning old build folder...
+    rmdir /s /q "%~dp0build"
+)
+if exist "%~dp0mcp_server_core.egg-info" (
+    echo [INFO] Cleaning old egg-info folder...
+    rmdir /s /q "%~dp0mcp_server_core.egg-info"
+)
 
-REM 4. Build distribution
-echo [INFO] Building distributions with uv build...
+REM 4. Pre-flight test suite
+echo [INFO] Running pre-flight pytest checks...
 cd /d "%~dp0"
+uv run pytest
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Test suite failed! Publish aborted.
+    pause
+    exit /b 1
+)
+
+REM 5. Build distribution
+echo [INFO] Building distributions with uv build...
 uv build
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] uv build failed!
@@ -51,7 +68,7 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-REM 5. Publish to PyPI
+REM 6. Publish to PyPI
 echo [INFO] Publishing to PyPI...
 uv publish --token "%PYPI_TOKEN%"
 if %ERRORLEVEL% NEQ 0 (

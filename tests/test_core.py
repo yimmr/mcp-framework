@@ -15,6 +15,9 @@ from mcp_server_core.cli import main as cli_main
 class TestMcpServerCore(unittest.TestCase):
     def test_version_and_exports(self):
         self.assertEqual(__version__, "0.7.0")
+        import mcp_server_core
+        for item in mcp_server_core.__all__:
+            self.assertTrue(hasattr(mcp_server_core, item), f"Missing attribute {item} in mcp_server_core")
         res = ToolResultListDict([{"name": "demo"}], key="projects")
         self.assertIsInstance(res, dict)
         self.assertEqual(res["status"], "success")

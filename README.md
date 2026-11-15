@@ -29,6 +29,11 @@ Decoupled, reusable transport, lifecycle, and scaffolding foundation for FastMCP
 - **🖥️ System Tray Supervisor (`BaseTrayApp`)**: Clean Windows tray app supporting dynamic High-DPI icon drawing, single-instance process supervision via Windows Job Objects, URL/Token copy menus, and custom project management actions.
 - **🚀 Unified Console Launcher (`launch_service`)**: Port checking, stale PID cleanup, tunnel heartbeat monitoring, and credential masking.
 - **📋 Envelope Response Model (`ToolResultListDict`)**: Dual-access envelope format supporting both dict indexing (`res["projects"]`) and list sequence operations (`len(res)`, `res[0]`).
+- **📊 Two-Layer Logging & Observability Engine (`mcp_server_core.logging`)**:
+  - Independent, production-grade log stream isolation: structured access logs (`access.log`), application runtime logs (`<service>.log`), and dedicated exception logs (`error.log`) with automatic size-based rotation and retention.
+  - End-to-end distributed tracing: Automatic extraction and propagation of `cf-ray`, `x-request-id`, or generated trace IDs (`x-trace-id`) across Starlette ASGI middleware, SSE response streams, and tool invocations.
+  - Non-invasive FastMCP instrumentation: Intercepts sync & async tool calls across streamable HTTP, stdio, and direct invocations with high-precision microsecond execution timing, formatted error reporting, and payload summaries.
+  - Automated credential redaction & argument sanitization: Built-in masking of sensitive keys (`password`, `token`, `secret`, `api_key`, `auth`) and payload truncation to prevent secrets from leaking into log files or console streams.
 
 ---
 
@@ -130,6 +135,22 @@ def list_projects() -> dict:
     return ToolResultListDict(projects, key="projects", status="success")
 ```
 
+#### Observability & Tool Instrumentation:
+```python
+from mcp_server_core import observe_tool, setup_logging, get_app_logger
+
+# 1. Initialize multi-stream logging engine
+setup_logging(service_name="my_service")
+logger = get_app_logger()
+
+# 2. Instrument standalone tool functions with @observe_tool
+@observe_tool(name="calculate_analytics")
+def calculate_analytics(query: str, secret_token: str = "") -> dict:
+    # secret_token is automatically masked in access and runtime logs!
+    logger.info("Executing custom analytics query...")
+    return {"status": "ok", "count": 42}
+```
+
 ---
 
 ## ⚙️ Configuration & Environment Variables
@@ -175,6 +196,16 @@ All consumer MCP services automatically inherit these settings without needing r
 | `CLOUDFLARE_METRICS_PORT` | `20245` | Local metrics port passed to `cloudflared --metrics`. |
 | `MCP_DB_PATH` | `.runtime/oauth_store.db` | SQLite database path for client registration and tokens. |
 | `MCP_RUNTIME_DIR` | `.runtime` | Local directory for PID and runtime state files. |
+| `MCP_LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `MCP_LOG_DIR` | `.runtime/logs` | Centralized directory for rotated structured log files. |
+| `MCP_LOG_APP_FILE` | *(dynamic)* | Application runtime and tool execution log filename (e.g. `<service>.log`). |
+| `MCP_LOG_ACCESS_FILE` | `access.log` | Structured HTTP and SSE access log filename. |
+| `MCP_LOG_ERROR_FILE` | `error.log` | Dedicated exception and error traceback log filename. |
+| `MCP_LOG_MAX_BYTES` | `10485760` (10MB) | Maximum file size in bytes before log file rotation. |
+| `MCP_LOG_BACKUP_COUNT` | `5` | Maximum number of backup rotated log files to retain. |
+| `MCP_LOG_ENABLE_CONSOLE` | `true` | Mirror application and error log output to console stdout/stderr (`true`/`false`). |
+| `MCP_LOG_ENABLE_TRACE_INJECTION` | `true` | Automatically inject active trace ID into formatted log records. |
+| `MCP_LOG_ALLOW_OUTSIDE_BASE` | `false` | Allow log directory to resolve outside the project root directory. |
 
 ---
 

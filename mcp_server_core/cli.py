@@ -348,6 +348,15 @@ MCP_UPSTREAM_URL=
 # MCP_ENABLE_PUBLIC_OAUTH=false
 # MCP_OAUTH_SCOPES=openid,profile,email,mcp:read,mcp:write
 # MCP_ALLOWED_REDIRECT_URIS=https://chatgpt.com/connector_platform_oauth_redirect
+
+# ==============================================================================
+# 3. Two-Layer Logging & Observability (Optional)
+# ==============================================================================
+# MCP_LOG_LEVEL=INFO
+# MCP_LOG_DIR=.runtime/logs
+# MCP_LOG_ENABLE_CONSOLE=true
+# MCP_LOG_MAX_BYTES=10485760
+# MCP_LOG_BACKUP_COUNT=5
 """
 
 README_TEMPLATE = """# {service_title}
@@ -959,7 +968,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args_list:
         if sys.stdin.isatty():
             args = parser.parse_args(["init"])
-            return args.func(args)
+            return int(args.func(args) or 0)
         else:
             parser.print_help()
             return 0
@@ -969,7 +978,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    return args.func(args)
+    return int(args.func(args) or 0)
 
 
 if __name__ == "__main__":

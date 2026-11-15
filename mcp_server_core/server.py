@@ -28,7 +28,7 @@ from starlette.applications import Starlette
 try:
     from mcp.server.fastmcp import FastMCP
 except (ImportError, ModuleNotFoundError):
-    from mcp.server.mcpserver import MCPServer as FastMCP
+    from mcp.server.mcpserver import MCPServer as FastMCP  # type: ignore[no-redef]
 
 from .env import DeploymentEnvConfig, get_runtime_dir
 from .http_server import create_mcp_asgi_app, mount_mcp_oauth_routes

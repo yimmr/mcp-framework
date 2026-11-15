@@ -123,7 +123,8 @@ class LoggingConfig:
         raw = config_dict or {}
 
         # Handle nested filenames dict e.g. {filenames: {app: "...", access: "...", error: "..."}}
-        raw_filenames = raw.get("filenames") if isinstance(raw.get("filenames"), dict) else {}
+        fn = raw.get("filenames")
+        raw_filenames: dict[str, Any] = fn if isinstance(fn, dict) else {}
 
         # Extract tier 3 (config dict)
         cfg_dir = raw.get("dir") or raw.get("log_dir")

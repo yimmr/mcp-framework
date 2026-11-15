@@ -22,7 +22,7 @@ from starlette.responses import JSONResponse, Response
 try:
     from mcp.server.fastmcp import FastMCP
 except (ImportError, ModuleNotFoundError):
-    from mcp.server.mcpserver import MCPServer as FastMCP
+    from mcp.server.mcpserver import MCPServer as FastMCP  # type: ignore[no-redef]
 
 from .env import DeploymentEnvConfig
 from .logging.manager import get_access_logger
@@ -48,7 +48,7 @@ def get_local_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+            return str(s.getsockname()[0])
     except Exception:
         return "127.0.0.1"
 
