@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import socket
+import time
 from typing import Any, Callable
 
 from .console import configure_console_encoding
@@ -24,6 +25,12 @@ except (ImportError, ModuleNotFoundError):
     from mcp.server.mcpserver import MCPServer as FastMCP
 
 from .env import DeploymentEnvConfig
+from .logging.manager import get_access_logger
+from .logging.trace import (
+    extract_or_generate_trace_id,
+    reset_current_trace_id,
+    set_current_trace_id,
+)
 from .oauth import (
     LocalOAuthServer,
     get_server_public_url,
@@ -44,6 +51,90 @@ def get_local_ip() -> str:
             return s.getsockname()[0]
     except Exception:
         return "127.0.0.1"
+
+
+class TraceContextMiddleware:
+    """Extract and propagate Cloudflare Ray ID / X-Request-ID across the async request lifecycle."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = scope.get("headers", [])
+        trace_id = extract_or_generate_trace_id(headers)
+        token = set_current_trace_id(trace_id)
+        if "state" not in scope:
+            scope["state"] = {}
+        scope["state"]["trace_id"] = trace_id
+
+        # Check if incoming request had cf-ray
+        incoming_cf_ray = None
+        for k, v in headers:
+            if isinstance(k, bytes) and k.lower() == b"cf-ray":
+                incoming_cf_ray = v
+                break
+
+        async def send_wrapper(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                resp_headers = list(message.get("headers", []))
+                resp_headers.append((b"x-trace-id", trace_id.encode("latin1")))
+                if incoming_cf_ray:
+                    resp_headers.append((b"cf-ray", incoming_cf_ray))
+                message["headers"] = resp_headers
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            reset_current_trace_id(token)
+
+
+class AccessLogMiddleware:
+    """Asynchronous, non-blocking HTTP access log middleware."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        start_time = time.perf_counter()
+        status_code = 500
+
+        client = scope.get("client")
+        client_str = f"{client[0]}:{client[1]}" if client else "127.0.0.1"
+
+        # Check for proxy / CF client IP
+        for k, v in scope.get("headers", []):
+            if isinstance(k, bytes) and k.lower() in (b"cf-connecting-ip", b"x-forwarded-for"):
+                ip_val = v.decode("latin1", errors="ignore").split(",")[0].strip()
+                if ip_val:
+                    client_str = ip_val
+                    break
+
+        async def send_wrapper(message: Any) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 200)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            duration_ms = (time.perf_counter() - start_time) * 1000.0
+            method = scope.get("method", "GET")
+            path = scope.get("path", "/")
+            http_version = scope.get("http_version", "1.1")
+            access_logger = get_access_logger()
+            access_logger.info(
+                f'{client_str} - "{method} {path} HTTP/{http_version}" {status_code} {duration_ms:.2f}ms'
+            )
 
 
 class NoCacheMiddleware:
@@ -340,6 +431,8 @@ def create_mcp_asgi_app(
         allow_origins=cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["*", "WWW-Authenticate", "Mcp-Session-Id"],
+        expose_headers=["*", "WWW-Authenticate", "Mcp-Session-Id", "X-Trace-ID", "CF-Ray"],
     )
+    app.add_middleware(AccessLogMiddleware)
+    app.add_middleware(TraceContextMiddleware)
     return app

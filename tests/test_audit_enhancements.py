@@ -36,7 +36,7 @@ class TestAuditEnhancements(unittest.IsolatedAsyncioTestCase):
     def test_metadata_dynamic_core_version(self):
         meta = ServiceMetadata(service_name="audit_test")
         ua = meta.get_user_agent()
-        self.assertIn("mcp-server-core/0.6.0", ua)
+        self.assertIn("mcp-server-core/0.7.0", ua)
 
         # Custom core version override
         custom_ua = meta.get_user_agent(core_version="1.0.0")

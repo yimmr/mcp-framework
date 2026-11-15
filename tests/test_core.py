@@ -14,7 +14,7 @@ from mcp_server_core.cli import main as cli_main
 
 class TestMcpServerCore(unittest.TestCase):
     def test_version_and_exports(self):
-        self.assertEqual(__version__, "0.6.0")
+        self.assertEqual(__version__, "0.7.0")
         res = ToolResultListDict([{"name": "demo"}], key="projects")
         self.assertIsInstance(res, dict)
         self.assertEqual(res["status"], "success")

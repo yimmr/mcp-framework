@@ -32,6 +32,8 @@ except (ImportError, ModuleNotFoundError):
 
 from .env import DeploymentEnvConfig, get_runtime_dir
 from .http_server import create_mcp_asgi_app, mount_mcp_oauth_routes
+from .logging.aspect import instrument_fastmcp_server
+from .logging.manager import setup_logging
 from .oauth import LocalOAuthServer
 from .tunnel import CloudflareTunnel, is_cloudflared_available
 
@@ -54,6 +56,13 @@ def cleanup_pid() -> None:
             _PID_FILE.unlink()
         except Exception:
             pass
+    try:
+        from .logging.manager import get_log_manager
+        mgr = get_log_manager()
+        if mgr:
+            mgr.close()
+    except Exception:
+        pass
 
 
 atexit.register(cleanup_pid)
@@ -69,8 +78,10 @@ def build_mcp_server_app(
     service_title: str | None = None,
     custom_consent_renderer: Callable[..., str] | None = None,
     custom_scopes: list[str] | None = None,
+    payload_hook: Callable[[str, dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> Starlette:
     """Mount standard OAuth endpoints and build the final ASGI application."""
+    instrument_fastmcp_server(server, payload_hook=payload_hook)
     resolved_name = service_name if service_name and service_name != "mcp_service" else getattr(env_cfg, "service_name", "mcp_service")
     resolved_title = service_title or getattr(env_cfg, "service_title", None)
     resolved_scopes = custom_scopes or getattr(env_cfg, "oauth_scopes", None)
@@ -106,11 +117,17 @@ async def serve_http(
     service_title: str | None = None,
     custom_consent_renderer: Callable[..., str] | None = None,
     custom_scopes: list[str] | None = None,
+    payload_hook: Callable[[str, dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> None:
     """Run FastMCP via Streamable HTTP with optional Cloudflare Tunnel and OAuth."""
     root = (base_dir or Path.cwd()).resolve()
     resolved_name = service_name if service_name and service_name != "mcp_service" else getattr(env_cfg, "service_name", "mcp_service")
     resolved_title = service_title or getattr(env_cfg, "service_title", None)
+
+    # Initialize multi-stream logging engine and FastMCP tool aspect
+    log_cfg = getattr(env_cfg, "logging_config", None)
+    setup_logging(base_dir=root, config=log_cfg, service_name=resolved_name)
+    instrument_fastmcp_server(server, payload_hook=payload_hook)
 
     if env_cfg.require_auth and not env_cfg.api_key:
         env_cfg.api_key = f"sec_{secrets.token_urlsafe(20)}"
@@ -134,6 +151,7 @@ async def serve_http(
         service_title=resolved_title,
         custom_consent_renderer=custom_consent_renderer,
         custom_scopes=custom_scopes,
+        payload_hook=payload_hook,
     )
 
     tunnel: CloudflareTunnel | None = None
@@ -237,11 +255,26 @@ async def serve_http(
         if tunnel:
             print("\n  [*] Stopping Cloudflare Tunnel...")
             tunnel.stop()
+        from .logging.manager import get_log_manager
+        mgr = get_log_manager()
+        if mgr:
+            mgr.close()
 
 
-def serve_stdio(server: FastMCP) -> None:
+def serve_stdio(
+    server: FastMCP,
+    base_dir: Path | None = None,
+    service_name: str | None = None,
+    payload_hook: Callable[[str, dict[str, Any]], dict[str, Any] | None] | None = None,
+) -> None:
     """Run FastMCP via Stdio transport."""
-    server.run(transport="stdio")
+    root = (base_dir or Path.cwd()).resolve()
+    mgr = setup_logging(base_dir=root, service_name=service_name or "mcp_service")
+    instrument_fastmcp_server(server, payload_hook=payload_hook)
+    try:
+        server.run(transport="stdio")
+    finally:
+        mgr.close()
 
 
 def run_mcp_server(
@@ -254,6 +287,7 @@ def run_mcp_server(
     cli_args: list[str] | None = None,
     service_title: str | None = None,
     custom_consent_renderer: Callable[..., str] | None = None,
+    payload_hook: Callable[[str, dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> None:
     """Universal MCP Server Runner entrypoint with CLI argument parsing."""
     root = (base_dir or Path.cwd()).resolve()
@@ -283,7 +317,7 @@ def run_mcp_server(
 
     # 3. Stdio mode
     if parsed.transport == "stdio":
-        serve_stdio(server)
+        serve_stdio(server, base_dir=root, service_name=service_name, payload_hook=payload_hook)
         return
 
     # 4. HTTP mode overrides
@@ -322,6 +356,7 @@ def run_mcp_server(
         banner_items=banner_items,
         service_title=resolved_title,
         custom_consent_renderer=custom_consent_renderer,
+        payload_hook=payload_hook,
     )
     try:
         anyio.run(serve_fn)

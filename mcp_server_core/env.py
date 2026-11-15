@@ -22,6 +22,7 @@ from .constants import (
     DEFAULT_MCP_PORT,
     DEFAULT_OAUTH_SCOPES,
 )
+from .logging.config import LoggingConfig
 
 OVERRIDE_ALIASES: dict[str, list[str]] = {
     "tunnel_token": ["CLOUDFLARE_TUNNEL_TOKEN", "MCP_TUNNEL_TOKEN", "tunnel_token"],
@@ -47,6 +48,11 @@ OVERRIDE_ALIASES: dict[str, list[str]] = {
     "service_name": ["MCP_SERVICE_NAME", "service_name"],
     "service_title": ["MCP_SERVICE_TITLE", "service_title"],
     "oauth_strict_pkce": ["MCP_OAUTH_STRICT_PKCE", "oauth_strict_pkce"],
+    "log_dir": ["MCP_LOG_DIR", "log_dir", "dir"],
+    "log_level": ["MCP_LOG_LEVEL", "log_level", "level"],
+    "log_app_file": ["MCP_LOG_APP_FILE", "log_app_file", "app_filename"],
+    "log_access_file": ["MCP_LOG_ACCESS_FILE", "log_access_file", "access_filename"],
+    "log_error_file": ["MCP_LOG_ERROR_FILE", "log_error_file", "error_filename"],
 }
 
 
@@ -222,6 +228,7 @@ class DeploymentEnvConfig:
     preset_client_id: str | None = None
     preset_client_name: str | None = None
     runtime_dir: str = ".runtime"
+    logging_config: LoggingConfig | None = None
 
     @property
     def display_title(self) -> str:
@@ -361,6 +368,13 @@ class DeploymentEnvConfig:
         raw_preset_name = _get("MCP_PRESET_CLIENT_NAME", None)
         resolved_preset_name = str(raw_preset_name).strip() if raw_preset_name is not None and str(raw_preset_name).strip() else None
 
+        # Resolve logging configuration
+        logging_dict = overrides.get("logging") if overrides and isinstance(overrides.get("logging"), dict) else (overrides or {})
+        resolved_logging = LoggingConfig.from_dict_and_env(
+            base_dir=root,
+            config_dict=logging_dict,
+        )
+
         return cls(
             enabled=_parse_bool(_get("MCP_ENABLED", True), default=True),
             host=str(_get("MCP_HOST", "127.0.0.1")),
@@ -397,4 +411,5 @@ class DeploymentEnvConfig:
             preset_client_id=resolved_preset_id,
             preset_client_name=resolved_preset_name,
             runtime_dir=resolved_rdir,
+            logging_config=resolved_logging,
         )

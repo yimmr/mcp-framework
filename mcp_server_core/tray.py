@@ -105,24 +105,45 @@ class ServerProcessSupervisor:
         env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
-        log_file = None
+        log_dir_str = os.getenv("MCP_LOG_DIR", "").strip()
+        if log_dir_str:
+            log_dir = Path(log_dir_str)
+            if not log_dir.is_absolute():
+                log_dir = (self.cwd / log_dir).resolve()
+        else:
+            log_dir = (self.runtime_dir / "logs").resolve()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        env["MCP_LOG_DIR"] = str(log_dir)
+
+        out_file = None
+        err_file = None
         try:
-            log_file = open(self.runtime_dir / "server_error.log", "a", encoding="utf-8")
+            out_file = open(log_dir / "app.log", "a", encoding="utf-8")
         except Exception:
             pass
+        try:
+            err_file = open(log_dir / "error.log", "a", encoding="utf-8")
+        except Exception:
+            pass
+
         try:
             self.proc = subprocess.Popen(
                 self.server_cmd,
                 cwd=str(self.cwd),
                 creationflags=creationflags,
                 env=env,
-                stdout=log_file or subprocess.DEVNULL,
-                stderr=log_file or subprocess.DEVNULL,
+                stdout=out_file or subprocess.DEVNULL,
+                stderr=err_file or subprocess.DEVNULL,
             )
         finally:
-            if log_file:
+            if out_file:
                 try:
-                    log_file.close()
+                    out_file.close()
+                except Exception:
+                    pass
+            if err_file:
+                try:
+                    err_file.close()
                 except Exception:
                     pass
 

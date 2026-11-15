@@ -9,7 +9,7 @@ CORE_PACKAGE_NAME = "mcp-server-core"
 try:
     __version__ = importlib.metadata.version(CORE_PACKAGE_NAME)
 except Exception:
-    __version__ = "0.6.0"
+    __version__ = "0.7.0"
 
 DEFAULT_MCP_PORT: int = 8788
 DEFAULT_FALLBACK_PORTS: set[int] = {DEFAULT_MCP_PORT}
